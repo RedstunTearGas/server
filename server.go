@@ -1,47 +1,81 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/labstack/echo"
+	"github.com/labstack/echo/middleware"
 	stripe "github.com/stripe/stripe-go"
 	"github.com/stripe/stripe-go/charge"
 	"github.com/stripe/stripe-go/customer"
 )
 
-func main() {
-	stripe.Key = os.Getenv("SECRET_KEY")
+type (
+	StripeToken struct {
+		Id    string `json:"id"`
+		Email string `json:"email"`
+	}
 
-	http.HandleFunc("/charge", func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+	ChargeRequest struct {
+		Token StripeToken `json:"token" validate:"required"`
+	}
+	ChargeResponse struct {
+		Message string `json:"message"`
+	}
+)
+
+func main() {
+	e := echo.New()
+
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"http://localhost:8080"},
+		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept},
+	}))
+
+	e.POST("/charge", func(c echo.Context) error {
+		cr := new(ChargeRequest)
+
+		if err := c.Bind(cr); err != nil {
+			return c.JSON(http.StatusForbidden, &ChargeResponse{
+				Message: "wrong data",
+			})
+		}
+
+		stripe.Key = os.Getenv("STRIPE_KEY")
 
 		customerParams := &stripe.CustomerParams{
-			Email: stripe.String(r.Form.Get("stripeEmail")),
+			Email: stripe.String(cr.Token.Email),
 		}
-		customerParams.SetSource(r.Form.Get("stripeToken"))
+		customerParams.SetSource(cr.Token.Id)
 
 		newCustomer, err := customer.New(customerParams)
 
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			c.JSON(http.StatusInternalServerError, &ChargeResponse{
+				Message: err.Error(),
+			})
+			return nil
 		}
 
 		chargeParams := &stripe.ChargeParams{
-			Amount:      stripe.Int64(500),
-			Currency:    stripe.String(string(stripe.CurrencyUSD)),
-			Description: stripe.String("Sample Charge"),
+			Amount:      stripe.Int64(108 * 100),
+			Currency:    stripe.String(string(stripe.CurrencyEUR)),
+			Description: stripe.String("Bombe Lacry 450ml 500g"),
 			Customer:    stripe.String(newCustomer.ID),
 		}
 
 		if _, err := charge.New(chargeParams); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			c.JSON(http.StatusInternalServerError, &ChargeResponse{
+				Message: err.Error(),
+			})
+			return nil
 		}
 
-		fmt.Fprintf(w, "Charge completed successfully!")
+		return c.JSON(http.StatusOK, &ChargeResponse{
+			Message: cr.Token.Id,
+		})
 	})
 
-	http.ListenAndServe(":4567", nil)
+	e.Logger.Fatal(e.Start(":1323"))
 }
